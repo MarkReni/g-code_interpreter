@@ -81,7 +81,75 @@ class MachineClient:
 
         print("Coolant turned off.")
 
+    def absolute_mode(self):
+        """ Turns absolute mode on (G90). """
 
+        print("Absolute positioning turned on.")
+
+    def incremental_mode(self):
+        """ Turns incremental mode on G(91). """
+
+        print("Incremental positioning turned on.")
+
+    def rapid_mode(self):
+        """ Turns rapid positioning mode on (G00). """
+
+        print("Rapid positioning turned on.")
+
+    def interpolation_mode(self):
+        """ Turns linear interpolation mode on (G01). """
+
+        print("Linear interpolation turned on.")
+
+    def stop_spindle(self):
+        """ Stops spindle from turning (M05). """
+
+        print("Spindle stopped from turning.")
+
+    def work_offset(self, gcode: str, datum: tuple):
+        """ Changes work offset and datum (G54 - G59). """
+
+        print("Changing work offset to '{:s}' having fixed point at X = {:d}, Y = {:d}, Z = {:d}.".format(gcode, datum[0], datum[1], datum[2]))
+
+    def command_interpret(self):
+        """ Instruct the control to interpret feed commands as mm/minute for linear moves. """
+
+        print("Interpretation of commands are now as mm/minute for linear moves.")
+
+    def cancel_canned_cycle(self):
+        """ Cancels any fixed cycle. """
+
+        print("Canned cycle has been cancelled.")
+
+    def cancel_tool_length(self):
+        """ Cancels tool length compensation. """
+
+        print("Tool length compensation has been cancelled.")
+
+    def canel_cutter(self):
+        """ Turn off cutter compensation. """
+
+        print("Cutter compensation has been turned off.")
+
+    def metric_mode(self):
+        """ Switch the CNC into metric mode. """
+
+        print("Machine has been switched into metric mode.")
+
+    def plane_selection(self, plane: str):
+        """ Select the working plane.  """
+
+        print(f"{plane} plane selected as rotational axis.")
+
+    def program_quit(self):
+        print("Program quitting...")
+        CNC_machine.coolant_off()
+        CNC_machine.stop_spindle()
+        CNC_machine.home()
+        quit()
+
+
+# Auxiliary functions
 def argParser() -> str:
     parser = argparse.ArgumentParser()
     parser.add_argument("gcode_file", type=str)
@@ -105,53 +173,112 @@ def error_check(literal: str) -> float:
 
 def interpreter(gcode):
     count = 0
+    # variables for modal commands
+    spindle_speed = 0
+    tool_name = ""
+    feed_rate = 0.0
+    absolute_mode = False  # absolute mode on
+    rapid_mode = False
+    home_position = (0.0, 0.0, 0.0)
+    X, Y, Z = home_position
+    datum = home_position
+
+    # Auxiliary function for G54
+    def change_datum(datum, X, Y, Z):
+        X, Y, Z = X + datum[0], Y + datum[1], Z + datum[2]
+        return (X, Y, Z)
+
     for line in gcode:
-        # check '#' in the beginning
+        X_set = False
+        Y_set = False
+        Z_set = False
+        # Check '#' in the beginning
         if count == 0:
             if line.strip() != '%':
                 raise Exception("Gcode syntax incorrect")
             count += 1
-        if line.strip()[0] == "(" or line.strip()[
-                                     0:3] == "N1 ":  # also skippern machine initialisation gcode "N1 G00 G17 G21 G40 G49 G80 G94"
+        # Skip comments
+        if line.strip()[0] == "(":
             continue
+        # Process N commands
+        elif line.strip()[0] == 'O' and count == 1:
+            print(f"Executing program {line.strip()}...")
+            count += 1
         else:
-            if line[0] == 'N':
-                # parameters
-                spindle_speed = 0
-                tool_name = ""
-                feed_rate = 0
-                X = 0.0
-                Y = 0.0
-                Z = 0.0
-
-                print(f"Line {line[0:3]}")
-
+            if line.strip()[0] == 'N':
+                print(line.split()[0])
                 parameters = line[1:].lstrip('0123456789.- ').split()
-
                 # parse instructions
+                parameters = sorted(parameters, reverse=True)
                 for parameter in parameters:
                     first_letter = parameter[0]
                     num = parameter[1:]
-
                     if first_letter == 'G':
                         if num == '00':
-                            pass
+                            if not rapid_mode:
+                                rapid_mode = True
+                                CNC_machine.rapid_mode()
+                            if absolute_mode:
+                                if X_set:
+                                    CNC_machine.move_x(X)
+                                    if Y_set:
+                                        CNC_machine.move_y(Y)
+                                    elif Z_set:
+                                        CNC_machine.move_z(Z)
+                                elif Y_set:
+                                    CNC_machine.move_y(Y)
+                                    if Z_set:
+                                        CNC_machine.move_z(Z)
+                                elif Z_set:
+                                    CNC_machine.move_z(Z)
+                                else:
+                                    pass
+                            X_set = False
+                            Y_set = False
+                            Z_set = False
                         elif num == '01':
-                            pass
+                            if rapid_mode:
+                                rapid_mode = False
+                                CNC_machine.interpolation_mode()
+                            if absolute_mode:
+                                CNC_machine.move(X, Y, Z)
+                        elif num == '17':
+                            CNC_machine.plane_selection("XY")
+                        elif num == '21':
+                            CNC_machine.metric_mode()
                         elif num == '28':
+                            X, Y, Z = home_position
                             CNC_machine.home()
+                        elif num == '40':
+                            CNC_machine.canel_cutter()
+                        elif num == '49':
+                            CNC_machine.cancel_tool_length()
                         elif num == '54':
-                            pass
+                            datum = (10, 10, 10)    # new fixed point, trivially selected
+                            X, Y, Z = change_datum(datum, X, Y, Z)  # auxiliary function that switches coordinate positions in accordance with the new datum
+                            CNC_machine.work_offset('G54', datum)
+                        elif num == '80':
+                            CNC_machine.cancel_canned_cycle()
                         elif num == '90':
-                            pass
+                            absolute_mode = True
+                            CNC_machine.absolute_mode()
                         elif num == '91':
-                            pass
+                            absolute_mode = False
+                            CNC_machine.incremental_mode()
+                        elif num == '94':
+                            CNC_machine.command_interpret()
                     elif first_letter == 'X':
-                        X = error_check(num)
+                        X_set = True
+                        X_temp = error_check(num)
+                        X = X_temp + datum[0]
                     elif first_letter == 'Y':
-                        Y = error_check(num)
+                        Y_set = True
+                        Y_temp = error_check(num)
+                        Y = Y_temp + datum[1]
                     elif first_letter == 'Z':
-                        Z = error_check(num)
+                        Z_set = True
+                        Z_temp = error_check(num)
+                        Z = Z_temp + datum[2]
                     elif first_letter == 'F':
                         feed_rate = error_check(num)
                         CNC_machine.set_feed_rate(feed_rate)
@@ -160,14 +287,15 @@ def interpreter(gcode):
                     elif first_letter == 'M':
                         if num == '03':
                             CNC_machine.set_spindle_speed(spindle_speed)
+                            CNC_machine.coolant_on()
                         elif num == '05':
-                            pass
+                            CNC_machine.stop_spindle()
                         elif num == '06':
                             CNC_machine.change_tool(tool_name)
                         elif num == '09':
                             CNC_machine.coolant_off()
                         elif num == '30':
-                            pass
+                            CNC_machine.program_quit()
                     elif first_letter == 'S':
                         try:
                             spindle_speed = int(num)
